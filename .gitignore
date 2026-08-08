@@ -1,0 +1,7 @@
+# 构建产物（由 BP/RP 打包生成，用 README 里的命令重新打包）
+*.mcaddon
+*.zip
+
+# 系统文件
+.DS_Store
+Thumbs.db

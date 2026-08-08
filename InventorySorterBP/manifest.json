@@ -1,0 +1,30 @@
+{
+  "format_version": 2,
+  "header": {
+    "name": "一键整理物品栏",
+    "description": "HUD 按钮一键整理：堆叠合并 + 按类别分组。聊天输入 /inv:sort 也可触发。",
+    "uuid": "8205c5f4-4ef8-413e-8fde-75b5b85345df",
+    "version": [1, 0, 2],
+    "min_engine_version": [1, 26, 0]
+  },
+  "modules": [
+    {
+      "type": "data",
+      "uuid": "bd049a56-5480-476c-be5b-eb305e1a7cc8",
+      "version": [1, 0, 2]
+    },
+    {
+      "type": "script",
+      "language": "javascript",
+      "entry": "scripts/main.js",
+      "uuid": "cb731ff8-5ea5-4a53-8ec4-3d4c989e1b9f",
+      "version": [1, 0, 2]
+    }
+  ],
+  "dependencies": [
+    {
+      "module_name": "@minecraft/server",
+      "version": "2.0.0"
+    }
+  ]
+}
