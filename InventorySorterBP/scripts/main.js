@@ -1,20 +1,22 @@
 /**
- * main.js — 一键整理物品栏 入口脚本
+ * main.js — Inventory Sorter entry script
  *
- * 触发方式（官方 stable API，无需作弊）：
- *   1. 按下潜行键：整理玩家物品栏，并同时整理视线指向的存储容器
- *   2. /inv:sort：整理玩家物品栏
- *   3. /inv:sortchest：整理视线指向的存储容器
+ * Triggers (official stable API, no cheats required):
+ *   1. Press the sneak key: sort the player's inventory, and also the storage
+ *      container the player is looking at.
+ *   2. /inv:sort: sort the player's inventory only.
+ *   3. /inv:sortchest: sort the storage container being looked at.
  *
- * 执行上下文说明（重要）：
- *   自定义命令的回调与 before 事件一样，运行在「受限执行上下文」
- *   （restricted execution），此模式下不能修改世界状态——
- *   包括 container.setItem、ItemStack.amount 赋值等（会抛
- *   "Native function/property ... cannot be used in restricted execution"）。
- *   因此：
- *   - 命令回调里只把玩家 id 放入队列（纯 JS 操作，不碰引擎改世界的 API）；
- *   - 真正的整理在 system.run / system.runInterval 的回调里执行
- *     （默认执行上下文，拥有全部 API）。
+ * Execution context note (important):
+ *   Custom command callbacks (like before events) run in the "restricted
+ *   execution" context, where world state cannot be modified — including
+ *   container.setItem, ItemStack.amount assignment, etc. (throws
+ *   "Native function/property ... cannot be used in restricted execution").
+ *   Therefore:
+ *   - Command callbacks only push the player id into a queue (pure JS, no
+ *     world-modifying engine API).
+ *   - The actual sorting runs inside system.run / system.runInterval
+ *     callbacks (default execution context, full API access).
  */
 import {
   world,
@@ -28,12 +30,13 @@ import {
 import { mergeGroups, sortItems, mergeAndSort } from "./sort_logic.js";
 
 const COMMAND_NAME = "inv:sort";
-const COOLDOWN_TICKS = 8;       // 防连点（0.4 秒）
-const INTERVAL_TICKS = 2;       // 兜底队列轮询间隔
+const COOLDOWN_TICKS = 8;       // anti-spam cooldown (0.4 s)
+const INTERVAL_TICKS = 2;       // fallback queue polling interval
 
 // 玩家容器布局：0-8 为快捷栏，9-35 为物品栏主体
 const HOTBAR_SIZE = 9;
 const INVENTORY_START = 9;
+// 存储容器白名单（chest 无下划线后缀，需显式列出；_chest/_shulker_box 后缀在 sortChest 匹配）
 const STORAGE_BLOCKS = new Set([
   "minecraft:chest",
   "minecraft:trapped_chest",
@@ -100,8 +103,9 @@ function onChestCommand(origin) {
 }
 
 /**
- * 游戏内自测（/inv:selftest）：用真实引擎的 ItemStack 跑一遍排序逻辑，
- * 验证合并/分类/数量守恒，并把结果发给玩家。不触碰玩家物品栏。
+ * In-game self-test (/inv:selftest): runs the sorting logic against real
+ * engine ItemStacks to verify merging/classification/count conservation,
+ * then reports the result to the player. Never touches the player's inventory.
  */
 function runGameSelfTest(player) {
   const failures = [];
@@ -110,39 +114,39 @@ function runGameSelfTest(player) {
     const stackable = (a, b) => a.isStackableWith(b);
     const cloneFn = (st) => st.clone();
 
-    // 1) 圆石 40×3 → 总量 120，拆成合法数量栈
+    // 1) Cobblestone 40×3 → total 120, split into valid stack sizes
     const c = [40, 40, 40].map((n) => new ItemStack("minecraft:cobblestone", n));
     const r1 = mergeAndSort(c, stackable, cloneFn);
     const t1 = r1.reduce((a, s) => a + s.amount, 0);
-    test(t1 === 120, `圆石总量 ${t1} != 120`);
-    test(r1.every((s) => s.amount >= 1 && s.amount <= s.maxAmount), "圆石存在越界数量");
+    test(t1 === 120, `Cobblestone total ${t1} != 120`);
+    test(r1.every((s) => s.amount >= 1 && s.amount <= s.maxAmount), "Cobblestone stack has an invalid amount");
 
-    // 2) 苹果 5 + 60 → 64 + 1
+    // 2) Apple 5 + 60 → 64 + 1
     const a = [new ItemStack("minecraft:apple", 5), new ItemStack("minecraft:apple", 60)];
     const r2 = mergeAndSort(a, stackable, cloneFn);
     test(r2.length === 2 && r2[0].amount === 64 && r2[1].amount === 1,
-      `苹果合并结果错误: ${r2.map((s) => s.amount).join("+")}`);
+      `Apple merge result wrong: ${r2.map((s) => s.amount).join("+")}`);
 
-    // 3) 圆石 + 石头（不同物品）不合并
+    // 3) Cobblestone + stone (different items) must not merge
     const d = [new ItemStack("minecraft:cobblestone", 30), new ItemStack("minecraft:stone", 30)];
-    test(mergeAndSort(d, stackable, cloneFn).length === 2, "不同物品被误合并");
+    test(mergeAndSort(d, stackable, cloneFn).length === 2, "Different items were wrongly merged");
 
-    // 4) 工具（不可堆叠）1+1 不合并
+    // 4) Tools (non-stackable) 1+1 must not merge
     const sw = [new ItemStack("minecraft:diamond_sword", 1), new ItemStack("minecraft:diamond_sword", 1)];
-    test(mergeAndSort(sw, stackable, cloneFn).length === 2, "工具被误合并");
+    test(mergeAndSort(sw, stackable, cloneFn).length === 2, "Tools were wrongly merged");
 
-    // 5) 同物品满堆叠 + 余数 → 不丢物品
+    // 5) Full stack + remainder → no items lost
     const f = [new ItemStack("minecraft:cobblestone", 64), new ItemStack("minecraft:cobblestone", 30)];
     const r5 = mergeAndSort(f, stackable, cloneFn);
-    test(r5.reduce((x, s) => x + s.amount, 0) === 94, "满堆叠+余数总量错误");
+    test(r5.reduce((x, s) => x + s.amount, 0) === 94, "Full stack + remainder total wrong");
 
     if (failures.length === 0) {
-      player.sendMessage("§a✔ 自测全部通过（合并/分类/数量守恒，共 5 组）");
+      player.sendMessage("§a✔ Self-test passed (merge, sort and count conservation, 5 checks)");
     } else {
-      player.sendMessage("§c自测失败：" + failures.join("；"));
+      player.sendMessage("§cSelf-test failed: " + failures.join("; "));
     }
   } catch (e) {
-    player.sendMessage("§c自测异常：" + (e && e.message ? e.message : String(e)));
+    player.sendMessage("§cSelf-test error: " + (e && e.message ? e.message : String(e)));
   }
 }
 
@@ -196,14 +200,42 @@ function sortInventory(player) {
   } catch (_) { /* 静默模式 */ }
 }
 
+// 实体容器（矿车/船）：不是方块，需要实体射线检测
+const ENTITY_CONTAINERS = new Set([
+  "minecraft:chest_minecart",
+  "minecraft:chest_boat",
+  "minecraft:chest_raft",
+]);
+
 function sortChest(player) {
   try {
     const hit = player.getBlockFromViewDirection({ maxDistance: 8 });
     const block = hit && hit.block;
-    const isStorage = block && (
-      STORAGE_BLOCKS.has(block.typeId) || block.typeId.endsWith("_shulker_box")
+    // 白名单：chest/trapped_chest/barrel 显式列出；所有 *_chest（铜箱及
+    // 氧化变体等）和 *_shulker_box（各色潜影盒）按后缀匹配。
+    // 末影箱（_chest 后缀会匹配到）不整理；熔炉、漏斗等非存储容器也不处理。
+    const isStorage = block && block.typeId !== "minecraft:ender_chest" && (
+      STORAGE_BLOCKS.has(block.typeId) ||
+      block.typeId.endsWith("_chest") ||
+      block.typeId.endsWith("_shulker_box")
     );
-    if (!isStorage) return;
+    if (!isStorage) {
+      // 方块不是存储容器 → 再查实体容器（箱子矿车/运输船），
+      // 从玩家头部沿视线方向做实体射线检测。
+      const rayHits = player.dimension.getEntitiesFromRay({
+        origin: player.getHeadLocation(),
+        direction: player.getViewDirection(),
+      }, { maxDistance: 8 });
+      for (const r of rayHits) {
+        if (!ENTITY_CONTAINERS.has(r.entity.typeId)) continue;
+        const comp = r.entity.getComponent("minecraft:inventory");
+        const container = comp && comp.container;
+        if (!container) continue;
+        sortContainer(container, 0);
+        break; // 只整理第一个命中的实体容器
+      }
+      return;
+    }
     const component = block && block.getComponent("minecraft:inventory");
     const container = component && component.container;
     if (!container) return;
@@ -234,24 +266,24 @@ function runStartupSelfTest() {
     const failures = [];
     const check = (cond, msg) => { if (!cond) failures.push(msg); };
 
-    // 1) 圆石 40×3 → 总量 120，数量合法
+    // 1) Cobblestone 40×3 → total 120, valid amounts
     const r1 = mergeAndSort([40, 40, 40].map((n) => new ItemStack("minecraft:cobblestone", n)), stackable, cloneFn);
-    check(r1.reduce((a, s) => a + s.amount, 0) === 120, "圆石总量错误");
-    check(r1.every((s) => s.amount >= 1 && s.amount <= s.maxAmount), "圆石存在越界数量");
+    check(r1.reduce((a, s) => a + s.amount, 0) === 120, "cobblestone total wrong");
+    check(r1.every((s) => s.amount >= 1 && s.amount <= s.maxAmount), "cobblestone amount out of bounds");
 
-    // 2) 苹果 5+60 → 64+1
+    // 2) Apple 5+60 → 64+1
     const r2 = mergeAndSort([new ItemStack("minecraft:apple", 5), new ItemStack("minecraft:apple", 60)], stackable, cloneFn);
-    check(r2.length === 2 && r2[0].amount === 64 && r2[1].amount === 1, "苹果合并错误");
+    check(r2.length === 2 && r2[0].amount === 64 && r2[1].amount === 1, "apple merge wrong");
 
-    // 3) 不同物品不合并
-    check(mergeAndSort([new ItemStack("minecraft:cobblestone", 30), new ItemStack("minecraft:stone", 30)], stackable, cloneFn).length === 2, "不同物品误合并");
+    // 3) Different items must not merge
+    check(mergeAndSort([new ItemStack("minecraft:cobblestone", 30), new ItemStack("minecraft:stone", 30)], stackable, cloneFn).length === 2, "different items merged");
 
-    // 4) 工具不合并
-    check(mergeAndSort([new ItemStack("minecraft:diamond_sword", 1), new ItemStack("minecraft:diamond_sword", 1)], stackable, cloneFn).length === 2, "工具误合并");
+    // 4) Tools must not merge
+    check(mergeAndSort([new ItemStack("minecraft:diamond_sword", 1), new ItemStack("minecraft:diamond_sword", 1)], stackable, cloneFn).length === 2, "tools merged");
 
-    // 5) 满堆叠+余数不丢物品
+    // 5) Full stack + remainder must not lose items
     const r5 = mergeAndSort([new ItemStack("minecraft:cobblestone", 64), new ItemStack("minecraft:cobblestone", 30)], stackable, cloneFn);
-    check(r5.reduce((x, s) => x + s.amount, 0) === 94, "满堆叠+余数总量错误");
+    check(r5.reduce((x, s) => x + s.amount, 0) === 94, "full stack + remainder total wrong");
 
     // 6) 容器范围测试：只整理物品栏主体（9-35），快捷栏（0-8）完全不动
     const fakeItems = new Array(36).fill(undefined);
@@ -267,19 +299,19 @@ function runStartupSelfTest() {
     fakeItems[20] = new ItemStack("minecraft:apple", 5);          // 物品栏 20：苹果
     sortContainer(fakeContainer);
     const hb0 = fakeItems[0], hb3 = fakeItems[3];
-    check(hb0 && hb0.typeId === "minecraft:diamond_sword" && hb0.amount === 1, "快捷栏0被改动");
-    check(hb3 && hb3.typeId === "minecraft:cobblestone" && hb3.amount === 40, "快捷栏3被改动");
+    check(hb0 && hb0.typeId === "minecraft:diamond_sword" && hb0.amount === 1, "hotbar slot 0 was modified");
+    check(hb3 && hb3.typeId === "minecraft:cobblestone" && hb3.amount === 40, "hotbar slot 3 was modified");
     // 类别顺序：食物(2) 在 方块(3) 之前 → 苹果在前，圆石在后
     const s9 = fakeItems[9], s10 = fakeItems[10], s11 = fakeItems[11];
-    check(s9 && s9.typeId === "minecraft:apple" && s9.amount === 5, "物品栏9应为苹果5, 实际 " + (s9 && s9.typeId));
-    check(s10 && s10.typeId === "minecraft:cobblestone" && s10.amount === 64, "物品栏10应为圆石64, 实际 " + (s10 && s10.typeId));
-    check(s11 && s11.typeId === "minecraft:cobblestone" && s11.amount === 16, "物品栏11应为圆石16");
-    check(fakeItems[12] === undefined, "物品栏12应为空");
+    check(s9 && s9.typeId === "minecraft:apple" && s9.amount === 5, "slot 9 should be apple x5, got " + (s9 && s9.typeId));
+    check(s10 && s10.typeId === "minecraft:cobblestone" && s10.amount === 64, "slot 10 should be cobblestone x64, got " + (s10 && s10.typeId));
+    check(s11 && s11.typeId === "minecraft:cobblestone" && s11.amount === 16, "slot 11 should be cobblestone x16");
+    check(fakeItems[12] === undefined, "slot 12 should be empty");
 
-    if (failures.length === 0) console.warn("[InventorySorter] 引擎自测通过 (6组)");
-    else console.warn("[InventorySorter] 引擎自测失败: " + failures.join("；"));
+    if (failures.length === 0) console.warn("[InventorySorter] engine self-test passed (6 checks)");
+    else console.warn("[InventorySorter] engine self-test failed: " + failures.join("; "));
   } catch (e) {
-    console.warn("[InventorySorter] 引擎自测异常: " + (e && e.message ? e.message : String(e)));
+    console.warn("[InventorySorter] engine self-test error: " + (e && e.message ? e.message : String(e)));
   }
 }
 
@@ -287,7 +319,7 @@ system.beforeEvents.startup.subscribe((initEvent) => {
   initEvent.customCommandRegistry.registerCommand(
     {
       name: COMMAND_NAME,
-      description: "一键整理物品栏：堆叠合并并按类别分组",
+      description: "Sort your inventory",
       permissionLevel: CommandPermissionLevel.Any,
       cheatsRequired: false,
     },
@@ -297,7 +329,7 @@ system.beforeEvents.startup.subscribe((initEvent) => {
   initEvent.customCommandRegistry.registerCommand(
     {
       name: "inv:sortchest",
-      description: "整理视线指向的箱子或其它容器",
+      description: "Sort the container you are looking at",
       permissionLevel: CommandPermissionLevel.Any,
       cheatsRequired: false,
     },
@@ -310,14 +342,14 @@ system.beforeEvents.startup.subscribe((initEvent) => {
       state: ButtonState.Pressed,
     });
   } catch (e) {
-    console.warn("[InventorySorter] 潜行快捷键注册失败: " + (e && e.message ? e.message : String(e)));
+    console.warn("[InventorySorter] failed to register sneak key shortcut: " + (e && e.message ? e.message : String(e)));
   }
 
   // 自测命令：验证排序逻辑在当前版本引擎上运行正常
   initEvent.customCommandRegistry.registerCommand(
     {
       name: "inv:selftest",
-      description: "一键整理物品栏：运行内置自测",
+      description: "Run the built-in sorting self-test",
       permissionLevel: CommandPermissionLevel.Any,
       cheatsRequired: false,
     },
