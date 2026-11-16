@@ -11,3 +11,6 @@ InventorySorterRP/
 # 系统文件
 .DS_Store
 Thumbs.db
+
+# Node 测试/开发依赖
+node_modules/

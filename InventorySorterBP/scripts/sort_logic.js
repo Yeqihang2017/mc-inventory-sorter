@@ -6,6 +6,14 @@
  * （游戏中的 ItemStack 副本也满足该结构，amount 会被修改，需自行保证传入的是副本）
  */
 
+/**
+ * @typedef {Object} SortableStack
+ * @property {string} typeId
+ * @property {number} [data]
+ * @property {number} amount
+ * @property {number} [maxAmount]
+ */
+
 // ---------- 类别定义（数字越小越靠前） ----------
 export const CAT = {
   TOOLS: 0,   // 工具/武器/弹药
@@ -61,12 +69,12 @@ const TOOL_IDS = new Set([
   "minecraft:bow", "minecraft:crossbow", "minecraft:trident", "minecraft:arrow",
   "minecraft:spectral_arrow", "minecraft:tipped_arrow", "minecraft:fishing_rod",
   "minecraft:totem_of_undying", "minecraft:bucket", "minecraft:carrot_on_a_stick",
-  "minecraft:warped_fungus_on_a_stick",
+  "minecraft:warped_fungus_on_a_stick", "minecraft:ice_ball",
 ]);
 
 // ---------- 护甲 ----------
 const ARMOR_SUFFIXES = [
-  "_helmet", "_chestplate", "_leggings", "_boots", "_horse_armor",
+  "_helmet", "_chestplate", "_leggings", "_boots", "_horse_armor", "_nautilus_armor",
 ];
 const ARMOR_IDS = new Set([
   "minecraft:elytra", "minecraft:wolf_armor",
@@ -137,6 +145,8 @@ const PLANT_IDS = new Set([
   "minecraft:crimson_nylium", "minecraft:warped_nylium",
   "minecraft:cave_vines", "minecraft:cave_vines_body_with_berries",
   "minecraft:cave_vines_head_with_berries",
+  // 1.26.x 新增植物/真菌
+  "minecraft:golden_dandelion", "minecraft:red_shrub", "minecraft:shelf_mushroom",
 ]);
 
 // ---------- 方块/建材 ----------
@@ -145,10 +155,11 @@ const BLOCK_SUFFIXES = [
   "_glass", "_glass_pane", "_bricks", "_brick", "_cobblestone", "_sandstone",
   "_slab", "_stairs", "_wall", "_fence", "_fence_gate", "_door", "_trapdoor",
   "_carpet", "_shulker_box", "_chest", "_barrel", "_bookshelf", "_bed",
+  "_shelf", "_cushion", "_bars", "_statue", "_spike",
   "_lantern", "_torch", "_chain", "_anvil", "_smoker", "_furnace",
   "_blast_furnace", "_cauldron", "_table", "_campfire", "_ladder", "_sign",
   "_hanging_sign", "_banner", "_head", "_skull", "_candle", "_flower_pot",
-  "_moss", "_dripstone", "_copper", "_amethyst", "_block", "_end_rod",
+  "_moss", "_dripstone", "_copper", "_amethyst", "_block", "_end_rod", "_rod",
   "_purpur", "_mud", "_tuff", "_deepslate", "_diorite", "_andesite",
   "_granite", "_powder", "_stem", "_hyphae", "_grate", "_pillar",
 ];
@@ -182,12 +193,23 @@ const BLOCK_IDS = new Set([
   "minecraft:jukebox", "minecraft:respawn_anchor", "minecraft:lodestone",
   "minecraft:conduit", "minecraft:scaffolding", "minecraft:ender_chest",
   "minecraft:anvil", "minecraft:smoker", "minecraft:blast_furnace",
+  // 无下划线/单数形式的基础方块（后缀匹配不到，必须显式列出）
+  "minecraft:torch", "minecraft:lantern", "minecraft:ladder", "minecraft:cauldron",
+  "minecraft:end_rod", "minecraft:iron_bars", "minecraft:bed", "minecraft:lit_pumpkin",
+  // 1.26.x 新增方块（氧化/打蜡变体由前缀剥离后归入同一材料）
+  "minecraft:cinnabar", "minecraft:sulfur", "minecraft:potent_sulfur",
+  "minecraft:ice_crystal", "minecraft:icicle",
+  "minecraft:copper_bars", "minecraft:copper_golem_statue", "minecraft:lightning_rod",
 ]);
 
 // ---------- 分类器（带缓存） ----------
 const classifyCache = new Map();
 function classifyRaw(id) {
   if (id.endsWith("_spawn_egg")) return CAT.MISC;
+  // 1.26.x：冰晶是方块，但 _crystal 后缀在材料规则里，必须先判定。
+  if (id === "minecraft:ice_crystal") return CAT.BLOCKS;
+  // 避雷针（含氧化/打蜡变体）属于红石机制，而不是普通建材。
+  if (id.endsWith("lightning_rod")) return CAT.REDSTONE;
   if (id.endsWith("_candle_cake") || id === "minecraft:candle_cake") return CAT.FOOD; // 蜡烛蛋糕（可食用）
   if (FOOD_IDS.has(id)) return CAT.FOOD;
   if (ARMOR_IDS.has(id)) return CAT.ARMOR;
@@ -238,24 +260,28 @@ export function categoryName(id) {
 // cobbled_ 是"圆石化"前缀（cobbled_deepslate → deepslate）。
 const FAMILY_STRIP = [
   "waxed_", "weathered_", "oxidized_", "exposed_", "stripped_", "crying_",
-  "polished_", "chiseled_", "cut_", "smooth_", "cracked_", "mossy_",
+  "polished_", "potent_", "chiseled_", "cut_", "smooth_", "cracked_", "mossy_",
   "infested_", "dead_", "glazed_", "tinted_", "deepslate_", "cobbled_",
   "raw_",
 ];
 
 // 形态后缀表：后缀 → 档位（长的在前，避免 _concrete 抢先匹配 _concrete_powder）。
 // 同时用于提取材料（迭代剥掉这些后缀得到基材）和判断形态档位。
+/** @type {Array<[string, number]>} */
 const SHAPE_SUFFIX = [
   ["_pressure_plate", 3], ["_fence_gate", 3], ["_hanging_sign", 3],
   ["_glass_pane", 3], ["_flower_pot", 3], ["_concrete_powder", 3],
   ["_smithing_template", 3], ["_pottery_sherd", 3], ["_music_disc", 3],
   ["_spawn_egg", 3], ["_shulker_box", 3],
+  ["_nautilus_armor", 0], ["_horse_armor", 0], ["_spear", 0],
+  ["_shelf", 3], ["_cushion", 3], ["_bars", 3], ["_statue", 3],
+  ["_spike", 3], ["_rod", 3],
   ["_stairs", 1], ["_slab", 2],
   ["_trapdoor", 3], ["_tiles", 3], ["_tile", 3], ["_bricks", 3],
   ["_brick", 3], ["_planks", 3], ["_leaves", 3], ["_sapling", 3],
   ["_wall", 3], ["_fence", 3], ["_door", 3], ["_button", 3],
-  ["_pillar", 3], ["_ore", 3], ["_block", 3], ["_wool", 3],
-  ["_carpet", 3], ["_concrete", 3], ["_glass", 3], ["_terracotta", 3],
+  ["_pillar", 3], ["_ore", 3], ["_block", 3],
+  ["_carpet", 3], ["_glass", 3], ["_terracotta", 3],
   ["_log", 3], ["_wood", 3], ["_stem", 3], ["_hyphae", 3],
   ["_ingot", 3], ["_nugget", 3], ["_boat", 3], ["_minecart", 3],
   ["_sign", 3], ["_banner", 3], ["_bed", 3], ["_candle", 3],
@@ -273,6 +299,8 @@ const STONE_MATERIALS = new Set([
   "minecraft:tuff", "minecraft:calcite", "minecraft:end_stone",
   "minecraft:purpur", "minecraft:prismarine", "minecraft:magma",
   "minecraft:obsidian", "minecraft:netherrack", "minecraft:nether",
+  // 1.26.x 新增石质建材
+  "minecraft:cinnabar", "minecraft:sulfur",
 ]);
 
 // 剥离修饰前缀（迭代，直到无可剥离）
@@ -360,6 +388,7 @@ export function hasModifier(id) {
 }
 
 // 后缀族（顺序即优先级，长的在前，避免 _concrete 抢先匹配 _concrete_powder）
+/** @type {Array<[string, string]>} */
 const FAMILY_SUFFIX = [
   ["_concrete_powder", "concrete_powder"],
   ["_smithing_template", "smithing_templates"],
@@ -367,6 +396,7 @@ const FAMILY_SUFFIX = [
   ["_music_disc", "music_discs"],
   ["_spawn_egg", "spawn_eggs"],
   ["_shulker_box", "shulker_boxes"],
+  ["_shelf", "shelves"],
   ["_pressure_plate", "fittings"],
   ["_fence_gate", "fittings"],
   ["_hanging_sign", "signs"],
@@ -378,6 +408,9 @@ const FAMILY_SUFFIX = [
   ["_nether_bricks", "bricks"],
   ["_bricks", "bricks"],
   ["_brick", "bricks"],
+  ["_brick_slab", "bricks"],
+  ["_brick_stairs", "bricks"],
+  ["_brick_wall", "bricks"],
   ["_trapdoor", "fittings"],
   ["_planks", "planks"],
   ["_log", "logs"],
@@ -386,8 +419,13 @@ const FAMILY_SUFFIX = [
   ["_hyphae", "logs"],
   ["_leaves", "leaves"],
   ["_sapling", "saplings"],
+  ["_wool_stairs", "wool"],
+  ["_wool_slab", "wool"],
   ["_wool", "wool"],
+  ["_cushion", "cushions"],
   ["_carpet", "carpets"],
+  ["_concrete_stairs", "concrete"],
+  ["_concrete_slab", "concrete"],
   ["_concrete", "concrete"],
   ["_glass", "glass"],
   ["_slab", "fittings"],
@@ -410,7 +448,9 @@ const FAMILY_SUFFIX = [
   ["_leggings", "armor"],
   ["_boots", "armor"],
   ["_horse_armor", "armor"],
+  ["_nautilus_armor", "armor"],
   ["_sword", "weapons"],
+  ["_spear", "spears"],
   ["_pickaxe", "tools"],
   ["_axe", "tools"],
   ["_shovel", "tools"],
@@ -429,6 +469,10 @@ const FAMILY_SUFFIX = [
   ["_bucket", "buckets"],
   ["_campfire", "campfires"],
   ["_chain", "chains"],
+  ["_bars", "bars"],
+  ["_statue", "statues"],
+  ["_spike", "spikes"],
+  ["_rod", "rods"],
   ["_anvil", "anvils"],
   ["_cauldron", "cauldrons"],
 ];
@@ -436,6 +480,7 @@ const FAMILY_SUFFIX = [
 // 前缀族
 const FAMILY_PREFIX = [
   ["minecraft:raw_", "raw_ores"],
+  ["minecraft:music_disc_", "music_discs"],
 ];
 
 // 精确匹配族（无规律后缀/前缀可用的）
@@ -470,6 +515,23 @@ const FAMILY_EXACT = {
   "minecraft:prismarine_shard": "minerals",
   "minecraft:prismarine_crystals": "minerals",
   "minecraft:glowstone_dust": "minerals",
+  // 单数/无后缀基础方块：与带后缀的变体归入同一族
+  "minecraft:torch": "torches",
+  "minecraft:lantern": "lanterns",
+  "minecraft:ladder": "ladders",
+  "minecraft:cauldron": "cauldrons",
+  "minecraft:iron_bars": "bars",
+  "minecraft:end_rod": "rods",
+  "minecraft:bed": "beds",
+  "minecraft:pumpkin": "pumpkins",
+  "minecraft:carved_pumpkin": "pumpkins",
+  "minecraft:lit_pumpkin": "pumpkins",
+  "minecraft:jack_o_lantern": "pumpkins",
+  "minecraft:red_mushroom": "mushrooms",
+  "minecraft:brown_mushroom": "mushrooms",
+  "minecraft:shelf_mushroom": "mushrooms",
+  "minecraft:ice_crystal": "ice_crystals",
+  "minecraft:icicle": "icicles",
 };
 
 const familyCache = new Map();
@@ -485,8 +547,10 @@ export function familyOf(id) {
   let f = familyCache.get(id);
   if (f !== undefined) return f;
   const s = stripPrefixes(id);
-  // 石质材料优先：圆石墙/石台阶/裂纹石砖等与圆石/石砖同族
-  if (STONE_MATERIALS.has(materialOf(id))) {
+  // 工具类优先于石质材料规则，避免 stone_spear 被归入 stones 族
+  if (s.endsWith("_spear")) {
+    f = "spears";
+  } else if (STONE_MATERIALS.has(materialOf(id))) {
     f = "stones";
   } else {
     f = FAMILY_EXACT[s];
@@ -507,10 +571,18 @@ export function familyOf(id) {
 }
 
 // ---------- 合并 + 排序 ----------
+/**
+ * @param {SortableStack} st
+ * @returns {string}
+ */
 export function stackKey(st) {
   return st.typeId + "|" + (st.data ?? 0);
 }
 
+/**
+ * @param {SortableStack} st
+ * @returns {number}
+ */
 export function maxAmountOf(st) {
   const m = Number(st.maxAmount);
   return Number.isFinite(m) && m > 0 ? m : 64;
@@ -525,10 +597,11 @@ export function maxAmountOf(st) {
  * 第一个栈复用传入对象（原地改 amount），其余栈用 cloneFn 复制模板，保留
  * 颜色/状态/自定义数据等属性。
  *
- * @param {Array<Array<{typeId:string,data?:number,amount:number,maxAmount?:number}>>} groups
- * @param {Function} [cloneFn] 复制栈的函数，默认浅拷贝（测试用）；
+ * @template {SortableStack} T
+ * @param {T[][]} groups
+ * @param {(st: T) => T} [cloneFn] 复制栈的函数，默认浅拷贝（测试用）；
  *        游戏中应传 (st) => st.clone()（ItemStack.clone 官方方法）
- * @returns 合并后的物品数组（同类相邻，可能仍有多个满堆叠/余数堆叠）
+ * @returns {T[]} 合并后的物品数组（同类相邻，可能仍有多个满堆叠/余数堆叠）
  */
 export function mergeGroups(groups, cloneFn = (st) => ({ ...st })) {
   const out = [];
@@ -568,8 +641,9 @@ export function mergeGroups(groups, cloneFn = (st) => ({ ...st })) {
  * （cobblestone_stairs 与 cobblestone 同材料）；形态档让组内按
  * 基础块 → 楼梯 → 台阶 → 其他衍生 排列（圆石、圆石楼梯、圆石台阶、圆石墙）；
  * 修饰标记让纯净系列在前、裂纹/苔藓等变体在后。
- * @param {Array<{typeId:string,data?:number}>} items
- * @returns 排序后的新数组
+ * @template {SortableStack} T
+ * @param {T[]} items
+ * @returns {T[]} 排序后的新数组
  */
 export function sortItems(items) {
   return [...items].sort((a, b) => {
@@ -597,10 +671,11 @@ export function sortItems(items) {
  * 一键合并 + 排序（测试/通用入口）。
  * 分组规则：默认按 typeId+data 比较；可传入自定义 stackable 判定函数
  * （游戏中可传 ItemStack.isStackableWith 以获得引擎级正确性）。
- * @param {Array<{typeId:string,data?:number,amount:number,maxAmount?:number}>} items
- * @param {Function} [stackable] 可选：(a, b) => boolean
- * @param {Function} [cloneFn] 可选：复制栈的函数（默认浅拷贝）
- * @returns 排序后的物品数组
+ * @template {SortableStack} T
+ * @param {T[]} items
+ * @param {(a: T, b: T) => boolean} [stackable] 可选：(a, b) => boolean
+ * @param {(st: T) => T} [cloneFn] 可选：复制栈的函数（默认浅拷贝）
+ * @returns {T[]} 排序后的物品数组
  */
 export function mergeAndSort(items, stackable, cloneFn) {
   const groups = [];

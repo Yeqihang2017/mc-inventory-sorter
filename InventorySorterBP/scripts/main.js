@@ -1,6 +1,8 @@
 /**
  * main.js — Inventory Sorter entry script
  *
+ * Target: Minecraft Bedrock 1.26.60+ (script API @minecraft/server 2.11.0).
+ *
  * Triggers (official stable API, no cheats required):
  *   1. Press the sneak key: sort the player's inventory, and also the storage
  *      container the player is looking at.
@@ -27,16 +29,15 @@ import {
   ButtonState,
   InputButton,
 } from "@minecraft/server";
-import { mergeGroups, sortItems, mergeAndSort } from "./sort_logic.js";
+import { mergeGroups, sortItems, mergeAndSort, classify, CAT } from "./sort_logic.js";
 
 const COMMAND_NAME = "inv:sort";
 const COOLDOWN_TICKS = 8;       // anti-spam cooldown (0.4 s)
 const INTERVAL_TICKS = 2;       // fallback queue polling interval
 
-// 玩家容器布局：0-8 为快捷栏，9-35 为物品栏主体
-const HOTBAR_SIZE = 9;
+// 玩家容器布局：9-35 为物品栏主体，0-8 为快捷栏（不参与整理）
 const INVENTORY_START = 9;
-// 存储容器白名单（chest 无下划线后缀，需显式列出；_chest/_shulker_box 后缀在 sortChest 匹配）
+// 存储容器白名单（chest 无下划线后缀，需显式列出；_chest/_shulker_box/_shelf 后缀在 sortChest 匹配）
 const STORAGE_BLOCKS = new Set([
   "minecraft:chest",
   "minecraft:trapped_chest",
@@ -74,32 +75,34 @@ function drainQueue() {
 }
 
 function onCommand(origin) {
-  // 兼容 sourceEntity / source 两种取值
-  const entity = origin && (origin.sourceEntity ?? origin.source);
-  if (!entity || !(entity instanceof Player)) return;
+  // CustomCommandOrigin.sourceEntity 是 2.x 稳定 API；不再回退到旧字段 source。
+  const entity = origin && origin.sourceEntity;
+  if (!entity || !(entity instanceof Player)) return undefined;
 
   // 冷却
   const now = system.currentTick;
   const last = lastUse.get(entity.id);
-  if (last !== undefined && now - last < COOLDOWN_TICKS) return;
+  if (last !== undefined && now - last < COOLDOWN_TICKS) return undefined;
   lastUse.set(entity.id, now);
 
   // 只入队 + 尝试立即处理，不做任何改世界的调用
   queue.set(entity.id, "inventory");
   system.run(() => drainQueue());
+  return undefined;
 }
 
 function onChestCommand(origin) {
-  const entity = origin && (origin.sourceEntity ?? origin.source);
-  if (!entity || !(entity instanceof Player)) return;
+  const entity = origin && origin.sourceEntity;
+  if (!entity || !(entity instanceof Player)) return undefined;
 
   const now = system.currentTick;
   const last = lastUse.get(entity.id);
-  if (last !== undefined && now - last < COOLDOWN_TICKS) return;
+  if (last !== undefined && now - last < COOLDOWN_TICKS) return undefined;
   lastUse.set(entity.id, now);
 
   queue.set(entity.id, "chest");
   system.run(() => drainQueue());
+  return undefined;
 }
 
 /**
@@ -140,8 +143,27 @@ function runGameSelfTest(player) {
     const r5 = mergeAndSort(f, stackable, cloneFn);
     test(r5.reduce((x, s) => x + s.amount, 0) === 94, "Full stack + remainder total wrong");
 
+    // 6) 1.26.x 新物品分类（不依赖具体图标/材质数据，只验证分类表）
+    const newCategories = [
+      ["minecraft:oak_shelf", CAT.BLOCKS],
+      ["minecraft:white_cushion", CAT.BLOCKS],
+      ["minecraft:cinnabar", CAT.BLOCKS],
+      ["minecraft:sulfur", CAT.BLOCKS],
+      ["minecraft:ice_crystal", CAT.BLOCKS],
+      ["minecraft:icicle", CAT.BLOCKS],
+      ["minecraft:copper_nautilus_armor", CAT.ARMOR],
+      ["minecraft:netherite_horse_armor", CAT.ARMOR],
+      ["minecraft:diamond_spear", CAT.TOOLS],
+      ["minecraft:lightning_rod", CAT.REDSTONE],
+      ["minecraft:golden_dandelion", CAT.PLANTS],
+      ["minecraft:straw_bed", CAT.BLOCKS],
+    ];
+    for (const [id, expected] of newCategories) {
+      test(classify(id) === expected, `${id} should be category ${expected}, got ${classify(id)}`);
+    }
+
     if (failures.length === 0) {
-      player.sendMessage("§a✔ Self-test passed (merge, sort and count conservation, 5 checks)");
+      player.sendMessage("§a✔ Self-test passed (stack merging, sort and count conservation, 1.26 item categories; 18 checks)");
     } else {
       player.sendMessage("§cSelf-test failed: " + failures.join("; "));
     }
@@ -153,13 +175,14 @@ function runGameSelfTest(player) {
 /**
  * 整理容器：只处理物品栏主体（9-35），快捷栏（0-8）完全不参与——
  * 不读取、不合并、不写回，快捷栏物品保持原位不动。
- * @param {Container} container 玩家物品栏容器
+ * @param {import("@minecraft/server").Container} container 玩家物品栏容器
  * @returns {number} 写回的物品组数
  */
 function sortContainer(container, startIndex = INVENTORY_START) {
   if (!container || container.size <= startIndex) return 0;
 
   // 1) 只读取物品栏主体（getItem 返回副本，可安全修改 amount）
+  /** @type {import("@minecraft/server").ItemStack[]} */
   const stacks = [];
   for (let i = startIndex; i < container.size; i++) {
     const st = container.getItem(i);
@@ -169,6 +192,7 @@ function sortContainer(container, startIndex = INVENTORY_START) {
 
   // 2) 用引擎的 isStackableWith 分组（自动处理颜色/状态/自定义数据），
   //    再交给纯逻辑模块做合并与类别排序
+  /** @type {import("@minecraft/server").ItemStack[][]} */
   const groups = [];
   for (const st of stacks) {
     let placed = false;
@@ -212,20 +236,24 @@ function sortChest(player) {
     const hit = player.getBlockFromViewDirection({ maxDistance: 8 });
     const block = hit && hit.block;
     // 白名单：chest/trapped_chest/barrel 显式列出；所有 *_chest（铜箱及
-    // 氧化变体等）和 *_shulker_box（各色潜影盒）按后缀匹配。
+    // 氧化变体等）、*_shulker_box（各色潜影盒）和 *_shelf（1.21.111+ 的
+    // 书架，3 格存储）按后缀匹配。
     // 末影箱（_chest 后缀会匹配到）不整理；熔炉、漏斗等非存储容器也不处理。
     const isStorage = block && block.typeId !== "minecraft:ender_chest" && (
       STORAGE_BLOCKS.has(block.typeId) ||
       block.typeId.endsWith("_chest") ||
-      block.typeId.endsWith("_shulker_box")
+      block.typeId.endsWith("_shulker_box") ||
+      block.typeId.endsWith("_shelf")
     );
     if (!isStorage) {
       // 方块不是存储容器 → 再查实体容器（箱子矿车/运输船），
       // 从玩家头部沿视线方向做实体射线检测。
-      const rayHits = player.dimension.getEntitiesFromRay({
-        origin: player.getHeadLocation(),
-        direction: player.getViewDirection(),
-      }, { maxDistance: 8 });
+      // 2.11.0 签名：getEntitiesFromRay(location, direction, options)
+      const rayHits = player.dimension.getEntitiesFromRay(
+        player.getHeadLocation(),
+        player.getViewDirection(),
+        { maxDistance: 8 }
+      );
       for (const r of rayHits) {
         if (!ENTITY_CONTAINERS.has(r.entity.typeId)) continue;
         const comp = r.entity.getComponent("minecraft:inventory");
@@ -287,6 +315,7 @@ function runStartupSelfTest() {
 
     // 6) 容器范围测试：只整理物品栏主体（9-35），快捷栏（0-8）完全不动
     const fakeItems = new Array(36).fill(undefined);
+    /** @type {any} 测试用最小容器替身 */
     const fakeContainer = {
       size: 36,
       getItem(i) { return fakeItems[i]; },
@@ -308,7 +337,26 @@ function runStartupSelfTest() {
     check(s11 && s11.typeId === "minecraft:cobblestone" && s11.amount === 16, "slot 11 should be cobblestone x16");
     check(fakeItems[12] === undefined, "slot 12 should be empty");
 
-    if (failures.length === 0) console.warn("[InventorySorter] engine self-test passed (6 checks)");
+    // 7) 1.26.x 新物品分类表
+    const newCategories = [
+      ["minecraft:oak_shelf", CAT.BLOCKS],
+      ["minecraft:white_cushion", CAT.BLOCKS],
+      ["minecraft:cinnabar", CAT.BLOCKS],
+      ["minecraft:sulfur", CAT.BLOCKS],
+      ["minecraft:ice_crystal", CAT.BLOCKS],
+      ["minecraft:icicle", CAT.BLOCKS],
+      ["minecraft:copper_nautilus_armor", CAT.ARMOR],
+      ["minecraft:netherite_horse_armor", CAT.ARMOR],
+      ["minecraft:diamond_spear", CAT.TOOLS],
+      ["minecraft:lightning_rod", CAT.REDSTONE],
+      ["minecraft:golden_dandelion", CAT.PLANTS],
+      ["minecraft:straw_bed", CAT.BLOCKS],
+    ];
+    for (const [id, expected] of newCategories) {
+      check(classify(id) === expected, `${id} should be category ${expected}, got ${classify(id)}`);
+    }
+
+    if (failures.length === 0) console.warn("[InventorySorter] engine self-test passed (7 sections)");
     else console.warn("[InventorySorter] engine self-test failed: " + failures.join("; "));
   } catch (e) {
     console.warn("[InventorySorter] engine self-test error: " + (e && e.message ? e.message : String(e)));
@@ -354,9 +402,10 @@ system.beforeEvents.startup.subscribe((initEvent) => {
       cheatsRequired: false,
     },
     (origin) => {
-      const entity = origin && (origin.sourceEntity ?? origin.source);
-      if (!entity || !(entity instanceof Player)) return;
+      const entity = origin && origin.sourceEntity;
+      if (!entity || !(entity instanceof Player)) return undefined;
       system.run(() => runGameSelfTest(entity));
+      return undefined;
     }
   );
 
