@@ -1,10 +1,12 @@
 {
   "name": "mc-inventory-sorter",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "private": true,
   "description": "Minecraft Bedrock behavior pack: silent inventory and container sorting",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "sort-order": "node tools/generate-sort-order.mjs",
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1"
   }
 }

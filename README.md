@@ -3,13 +3,15 @@
 Minecraft Bedrock behavior pack for **1.26.60+** (including the latest 1.26.63 hotfix), built against **`@minecraft/server` 2.11.0**. Sneak to silently sort your inventory, and also sort the storage container you are looking at.
 Minecraft 基岩版 **1.26.60+**（兼容最新 1.26.63 热修复）行为包，基于 **`@minecraft/server` 2.11.0** 构建。按下潜行键可静默整理玩家物品栏，并在准星对准存储容器时同时整理容器内容。
 
+排序顺序对齐 Java 版一键整理 mod **Inventory Profiles Next** 的默认规则（原版创造模式物品栏顺序）。
+
 ---
 
 ## English
 
 ### Installation
 
-1. Double-click `InventorySorter.mcaddon` to import the behavior pack.
+1. Double-click `InventorySorter-v1.3.0.mcaddon` to import the behavior pack.
 2. Enable "Inventory Sorter" in the Behavior Packs tab of the world settings.
 3. Enter the world and press the sneak key once to sort.
 
@@ -40,21 +42,20 @@ Sorting is silent — no sound effects, no chat messages. `/inv:selftest` report
 
 ### Sort order
 
-Items are first merged up to their maximum stack size, then arranged by category:
+Stacks are first merged up to their maximum stack size, then arranged exactly like the vanilla **creative inventory** — the same default rule the Java mod *Inventory Profiles Next* uses (`@creative_menu_order`):
 
-Tools/Weapons → Armor → Food → Blocks → Materials → Redstone → Plants → Miscellaneous
+> Building Blocks → Colored Blocks → Natural Blocks → Functional Blocks → Redstone → Tools & Utilities → Combat → Food & Drinks → Ingredients → Spawn Eggs
 
-Items are sorted by category, then by material family, then by shape. Within each material (e.g. cobblestone, stone, quartz, oak), items are ordered base block → stairs → slab → other variants (walls, bricks, etc.). So a stone family looks like: cobblestone, cobblestone stairs, cobblestone slab, cobblestone wall, mossy cobblestone, mossy cobblestone stairs…; stone bricks, cracked stone bricks and mossy stone bricks sit together, while smooth stone slabs and quartz bricks stay in their own subgroups. Items that differ in durability or state, or that cannot stack, are never merged.
+Inside each category:
 
-The 1.26.x item families are covered explicitly, including:
+- **Same material stays together.** Every wood type runs planks → stairs → slab → fence → fence gate → door → trapdoor → sign → hanging sign, and wood types follow the vanilla order (oak, spruce, birch, jungle, acacia, dark oak, mangrove, cherry, pale oak, poplar, bamboo, crimson, warped).
+- **Stones follow a fixed material order** (stone, cobblestone, granite, diorite, andesite, deepslate, tuff, calcite, dripstone, blackstone, basalt, obsidian, netherrack, nether bricks, end stone, purpur, prismarine, sandstone, red sandstone, quartz, bricks, mud, resin, cinnabar, sulfur, copper …). Within a material the order is base block → stairs → slab → wall → bricks, and polished / smooth / cut / chiseled / cracked / mossy variants sit next to the shape they belong to.
+- **Colored blocks follow the 16 dye colors** (white → orange → magenta → light blue → … → black): wool, carpet, concrete, concrete powder, terracotta, glazed terracotta, stained glass, glass panes, candles, cushions, harnesses.
+- **Copper steps through its oxidation stages**: plain → cut → chiseled → exposed → weathered → oxidized → waxed.
+- **Tools, weapons and armor progress through material tiers** (wooden, stone, copper, iron, golden, diamond, netherite); armor pieces run helmet → chestplate → leggings → boots, and horse / nautilus armor are separate groups.
+- **Storage blocks group by kind**: chests and trapped chests, ender chest, copper chest variants, then undyed shulker box and the colored shulker boxes in dye order.
 
-- Cinnabar and sulfur building sets (base, polished/chiseled, stairs, slabs, walls, bricks) grouped as stone materials.
-- Copper bars, chains, lanterns, torches, golem statues and lightning rods (including exposed/weathered/oxidized/waxed variants).
-- Wool and concrete stairs/slabs, sorted together with their base block by color.
-- Wooden shelves and colored cushions.
-- Nautilus armor (copper, iron, golden, diamond, netherite) and copper/netherite horse armor.
-- Spears (wooden, stone, copper, iron, golden, diamond, netherite).
-- Poplar wood set, golden dandelion, red shrub, shelf mushroom, ice crystals and icicles.
+Stacks that differ in durability, enchantment or any other component are never merged; they stay adjacent and are ordered by item ID.
 
 See [SORT_ORDER.md](SORT_ORDER.md) for the generated order of all 1,627 items in the 1.26.60 item registry.
 
@@ -68,8 +69,13 @@ InventorySorterBP/
     |-- main.js           # entry: sneak key / command triggers, in-game self-test
     `-- sort_logic.js     # pure sorting logic (unit-testable)
 tests/
-|-- project.test.mjs      # manifest, API usage and update regression checks
-`-- sort_logic.test.mjs   # merging, classification, family/shape ordering
+|-- project.test.mjs      # manifest, API usage and doc/order regression checks
+|-- sort_logic.test.mjs   # merging, categories, family/material/shape ordering
+`-- fixtures/
+    `-- vanilla-items-1.26.60.txt   # 1,627-item registry snapshot used by the tests
+tools/
+`-- generate-sort-order.mjs
+build.ps1
 package.json
 ```
 
@@ -83,27 +89,45 @@ node --test
 npm test
 ```
 
-The tests cover stack merging and count conservation, 1.26.x item classification, material/family/shape grouping, manifest/version checks, and regression checks for the 2.x API call signatures.
+If your environment forbids child processes (some sandboxes block `node --test`), run the two test files directly:
+
+```powershell
+node tests/sort_logic.test.mjs
+node tests/project.test.mjs
+```
+
+The tests cover stack merging and count conservation, category assignment for every 1.26.x item family, the creative-inventory order, family/material/shape ordering, full-registry classification (all 1,627 items), and a regression check that `SORT_ORDER.md` still matches the code.
+
+### Regenerating the sort order table
+
+After changing the sorting rules:
+
+```powershell
+npm run sort-order
+```
+
+This rewrites `SORT_ORDER.md` from `tests/fixtures/vanilla-items-1.26.60.txt` using the current `sort_logic.js`.
 
 ### Packaging
 
-From the repository root:
+Build artifacts always carry the pack version in the file name — `InventorySorter-v<version>.mcaddon` — where `<version>` is read from `InventorySorterBP/manifest.json`:
 
 ```powershell
-Compress-Archive -Path InventorySorterBP -DestinationPath InventorySorter.zip -Force
-Move-Item InventorySorter.zip InventorySorter.mcaddon -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+# -> InventorySorter-v1.3.0.mcaddon
 ```
 
-Build artifacts (`*.mcaddon`, `*.zip`) are ignored by Git; rebuild instead of committing them.
+`npm run build` runs the same script. It also removes the early, version-less artifact name if one is still lying around. Build artifacts (`*.mcaddon`, `*.zip`) are ignored by Git; rebuild instead of committing them.
 
-### Changelog — v1.2.0
+### Changelog — v1.3.0
 
-- Updated the target to Minecraft Bedrock 1.26.60+ and `@minecraft/server` 2.11.0; raised `min_engine_version` to `[1, 26, 60]`.
-- Added sorting rules for 1.26.x content (sulfur/cinnabar, copper building set, shelves, cushions, wool/concrete stairs & slabs, nautilus armor, spears, poplar, ice caves, new plants).
-- Added shelf support to container detection.
-- Fixed `getEntitiesFromRay` to use the 2.x signature `(location, direction, options)`, so chest minecarts and chest boats/rafts are detected correctly.
-- Replaced the removed `CustomCommandOrigin.source` fallback with `sourceEntity`.
-- Regenerated `SORT_ORDER.md` from the 1.26.60 item registry (1,627 items) and added a Node test suite.
+- Replaced the previous ad-hoc category order with the **creative-inventory order** that Inventory Profiles Next uses by default: Building Blocks → Colored Blocks → Natural → Functional → Redstone → Tools → Combat → Food → Ingredients → Spawn Eggs.
+- Added per-material ordering for wood types, the 16 dye colors, stone families, copper oxidation stages, tool/armor tiers and storage kinds, so related variants are no longer scattered alphabetically.
+- Classified the whole 1,627-item registry: only admin-only blocks (command blocks, barriers, light blocks, structure blocks …) fall into the "其他" bucket.
+- Added `tests/fixtures/vanilla-items-1.26.60.txt`, a full-registry classification test, and `tools/generate-sort-order.mjs`.
+- `SORT_ORDER.md` is now generated and verified against the sorting code.
+- Pack artifacts are now named `InventorySorter-v<version>.mcaddon`; `build.ps1` reads the version from the manifest.
+- Raised pack version to 1.3.0.
 
 ---
 
@@ -111,7 +135,7 @@ Build artifacts (`*.mcaddon`, `*.zip`) are ignored by Git; rebuild instead of co
 
 ### 安装
 
-1. 双击 `InventorySorter.mcaddon` 导入行为包。
+1. 双击 `InventorySorter-v1.3.0.mcaddon` 导入行为包。
 2. 在世界设置的行为包选项卡中启用“一键整理物品栏”。
 3. 进入世界后按一次潜行键执行整理。
 
@@ -142,21 +166,20 @@ Build artifacts (`*.mcaddon`, `*.zip`) are ignored by Git; rebuild instead of co
 
 ### 排序规则
 
-同类物品先合并到最大堆叠数，再按以下类别排列：
+同类物品先合并到最大堆叠数，然后**完全按原版创造模式物品栏的顺序**排列 —— 这正是 Java 版一键整理 mod *Inventory Profiles Next* 的默认规则（`@creative_menu_order`）：
 
-工具武器 → 护甲装备 → 食物 → 建材方块 → 矿物材料 → 红石机制 → 植物农业 → 杂项
+> 建筑方块 → 染色方块 → 自然方块 → 功能方块 → 红石 → 工具与实用物品 → 战斗用品 → 食物与饮品 → 原材料 → 刷怪蛋
 
-物品先按类别、再按材料家族、最后按形态排列。同一种材料（如圆石、石头、石英、橡木）内按「基础块 → 楼梯 → 台阶 → 其他衍生（墙、砖等）」排序：圆石、圆石楼梯、圆石台阶、圆石墙、苔石、苔石楼梯……；石砖、裂纹石砖和苔石砖紧挨着，平滑石台阶和石英砖各自成组不会插进石砖中间。耐久或状态不同、无法堆叠的物品不会合并。
+每个大类内部：
 
-已显式覆盖 1.26.x 的新物品族，包括：
+- **同一种材料挨在一起。** 每种木头按「木板 → 楼梯 → 台阶 → 栅栏 → 栅栏门 → 门 → 活板门 → 告示牌 → 悬挂告示牌」排列，木种本身按原版顺序（橡木、云杉、白桦、丛林、金合欢、深色橡木、红树、樱花、苍白橡木、白杨、竹、绯红、诡异）。
+- **石料按固定的材料顺序**（石、圆石、花岗岩、闪长岩、安山岩、深板岩、凝灰岩、方解石、滴水石、黑石、玄武岩、黑曜石、下界岩、下界砖、末地石、紫珀、海晶石、砂岩、红砂岩、石英、砖、泥、树脂、朱砂、硫磺、铜……）。每种材料内部按「基础块 → 楼梯 → 台阶 → 墙 → 砖」，磨制/平滑/切制/雕纹/裂纹/苔藓等变体紧跟在对应形态之后。
+- **染色方块按 16 种染料颜色**（白 → 橙 → 品红 → 淡蓝 → …… → 黑）：羊毛、地毯、混凝土、混凝土粉末、陶瓦、带釉陶瓦、染色玻璃、玻璃板、蜡烛、坐垫、挽具。
+- **铜制建材按氧化阶段**：普通 → 切制 → 雕纹 → 斑驳 → 风化 → 氧化 → 打蜡。
+- **工具、武器、护甲按材质等级**（木、石、铜、铁、金、钻石、下界合金）；护甲部件按「头盔 → 胸甲 → 护腿 → 靴子」，马铠与鹦鹉螺铠各自成组。
+- **容器按种类分组**：箱子与陷阱箱、末影箱、铜箱各氧化阶段，然后是未染色潜影盒与按颜色排列的各色潜影盒。
 
-- 朱砂与硫磺建材系列（基础、磨制/雕纹、楼梯、台阶、墙、砖），按石质材料归组。
-- 铜栏杆、锁链、灯笼、火把、铜傀儡雕像、避雷针（含氧化/打蜡变体）。
-- 羊毛与混凝土楼梯/台阶，按颜色与基础方块相邻排列。
-- 木质书架与各色坐垫。
-- 鹦鹉螺盔甲（铜、铁、金、钻石、下界合金）与铜/下界合金马铠。
-- 长矛（木、石、铜、铁、金、钻石、下界合金）。
-- 白杨木系列、金蒲公英、红色灌木、架状蘑菇、冰晶与冰锥。
+耐久、附魔或其他组件不同、无法堆叠的物品永远不会被合并，它们会彼此相邻并按物品 ID 排序。
 
 完整排序见 [SORT_ORDER.md](SORT_ORDER.md)，已按 1.26.60 物品注册表重新生成（1,627 个物品）。
 
@@ -170,8 +193,13 @@ InventorySorterBP/
     |-- main.js           # 入口：潜行键/命令触发、游戏内自测
     `-- sort_logic.js     # 纯排序逻辑（可独立单元测试）
 tests/
-|-- project.test.mjs      # 清单、API 用法与版本回归测试
-`-- sort_logic.test.mjs   # 合并、分类、族/形态排序
+|-- project.test.mjs      # 清单、API 用法与「文档/顺序一致性」回归测试
+|-- sort_logic.test.mjs   # 合并、类别、族/材料/形态排序
+`-- fixtures/
+    `-- vanilla-items-1.26.60.txt   # 1,627 个物品的注册表快照（测试用）
+tools/
+`-- generate-sort-order.mjs
+build.ps1
 package.json
 ```
 
@@ -185,24 +213,42 @@ node --test
 npm test
 ```
 
-测试覆盖堆叠合并与数量守恒、1.26.x 物品分类、材料/族/形态归组、清单版本检查，以及 2.x API 调用签名的回归检查。
+如果当前环境禁止子进程（部分沙箱会阻止 `node --test`），可以直接运行两个测试文件：
+
+```powershell
+node tests/sort_logic.test.mjs
+node tests/project.test.mjs
+```
+
+测试覆盖堆叠合并与数量守恒、全部 1.26.x 物品族的分类、创造模式物品栏顺序、材料/形态归组、全注册表分类（1,627 个物品），以及 `SORT_ORDER.md` 与排序代码是否同步的回归检查。
+
+### 重新生成排序顺序表
+
+修改排序规则后执行：
+
+```powershell
+npm run sort-order
+```
+
+该命令会依据 `tests/fixtures/vanilla-items-1.26.60.txt` 和当前的 `sort_logic.js` 重写 `SORT_ORDER.md`。
 
 ### 打包
 
-在仓库根目录执行：
+构建产物始终带版本号：`InventorySorter-v<版本>.mcaddon`，版本号直接读自 `InventorySorterBP/manifest.json`：
 
 ```powershell
-Compress-Archive -Path InventorySorterBP -DestinationPath InventorySorter.zip -Force
-Move-Item InventorySorter.zip InventorySorter.mcaddon -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
+# -> InventorySorter-v1.3.0.mcaddon
 ```
 
-构建产物（`*.mcaddon`、`*.zip`）已被 Git 忽略，请重新打包而不是提交产物。
+`npm run build` 执行的是同一个脚本。它还会顺带清理早期不带版本号的旧产物。构建产物（`*.mcaddon`、`*.zip`）已被 Git 忽略，请重新打包而不是提交产物。
 
-### 更新日志 — v1.2.0
+### 更新日志 — v1.3.0
 
-- 目标版本升级到 Minecraft 基岩版 1.26.60+ 与 `@minecraft/server` 2.11.0；`min_engine_version` 提升为 `[1, 26, 60]`。
-- 新增 1.26.x 内容排序规则（朱砂/硫磺、铜建材、书架、坐垫、羊毛/混凝土楼梯与台阶、鹦鹉螺盔甲、长矛、白杨木、冰洞、新植物）。
-- 容器检测新增书架支持。
-- 修复 `getEntitiesFromRay` 的调用方式，改用 2.x 签名 `(location, direction, options)`，箱子矿车与运输船/木筏现在能被正确检测。
-- 移除已不存在的 `CustomCommandOrigin.source` 回退，统一使用 `sourceEntity`。
-- 按 1.26.60 物品注册表重新生成 `SORT_ORDER.md`（1,627 个物品），并新增 Node 测试套件。
+- 排序顺序改为与 **Inventory Profiles Next 默认规则一致**的原版创造模式物品栏顺序：建筑 → 染色 → 自然 → 功能 → 红石 → 工具 → 战斗 → 食物 → 原材料 → 刷怪蛋，取代原先自定义的 8 类顺序。
+- 新增木种、16 种染料颜色、石料家族、铜氧化阶段、工具/护甲材质等级、容器种类的组内顺序，相关变体不再因 ID 字母序被打散。
+- 全量归类 1,627 个物品：只有管理员专用方块（命令方块、屏障、光源方块、结构方块等）落入“其他”。
+- 新增 `tests/fixtures/vanilla-items-1.26.60.txt`（全量物品清单）、全注册表分类测试，以及 `tools/generate-sort-order.mjs`。
+- `SORT_ORDER.md` 改为自动生成，并新增与代码同步的回归测试。
+- 行为包产物改为 `InventorySorter-v<版本>.mcaddon` 命名，`build.ps1` 自动从清单读取版本号。
+- 行为包版本提升到 1.3.0。

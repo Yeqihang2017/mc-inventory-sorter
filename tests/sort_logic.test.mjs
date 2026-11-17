@@ -1,17 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   CAT,
   classify,
   categoryName,
-  familyOf,
-  materialOf,
-  shapeOf,
-  hasModifier,
+  sectionOf,
+  sortItems,
   mergeGroups,
   mergeAndSort,
-  sortItems,
 } from "../InventorySorterBP/scripts/sort_logic.js";
 
 /** Build a plain ItemStack-like object for the pure sorting logic. */
@@ -50,155 +48,243 @@ test("mergeAndSort does not lose items when a full stack is mixed with a remaind
   assert.equal(out.reduce((sum, s) => sum + s.amount, 0), 94);
 });
 
-test("sortItems orders categories tools -> armor -> food -> blocks -> materials -> redstone -> plants -> misc", () => {
-  const items = [
-    stack("minecraft:music_disc_13"),
-    stack("minecraft:oak_sapling"),
-    stack("minecraft:redstone"),
-    stack("minecraft:iron_ingot"),
-    stack("minecraft:oak_shelf"),
-    stack("minecraft:apple"),
-    stack("minecraft:iron_helmet"),
-    stack("minecraft:diamond_sword"),
+test("categories follow the creative-inventory order used by Inventory Profiles Next", () => {
+  const expected = [
+    "minecraft:oak_planks",       // 建筑方块
+    "minecraft:white_wool",       // 染色方块
+    "minecraft:oak_log",          // 自然方块
+    "minecraft:chest",            // 功能方块
+    "minecraft:redstone",         // 红石
+    "minecraft:diamond_pickaxe",  // 工具与实用物品
+    "minecraft:diamond_sword",    // 战斗用品
+    "minecraft:apple",            // 食物与饮品
+    "minecraft:iron_ingot",       // 原材料
+    "minecraft:pig_spawn_egg",    // 刷怪蛋
+    "minecraft:command_block",    // 其他
   ];
-  assert.deepEqual(idsOf(sortItems(items)), [
-    "minecraft:diamond_sword",
-    "minecraft:iron_helmet",
-    "minecraft:apple",
-    "minecraft:oak_shelf",
-    "minecraft:iron_ingot",
-    "minecraft:redstone",
-    "minecraft:oak_sapling",
-    "minecraft:music_disc_13",
-  ]);
+  const shuffled = [
+    expected[6], expected[10], expected[2], expected[8], expected[0],
+    expected[9], expected[4], expected[7], expected[1], expected[5], expected[3],
+  ].map((id) => stack(id));
+  assert.deepEqual(idsOf(sortItems(shuffled)), expected);
 });
 
-test("1.26.x blocks and items are classified into the right categories", () => {
+test("classification maps 1.26.x content to the creative categories", () => {
   const expected = [
-    ["minecraft:oak_shelf", CAT.BLOCKS],
-    ["minecraft:bamboo_shelf", CAT.BLOCKS],
-    ["minecraft:white_cushion", CAT.BLOCKS],
-    ["minecraft:black_wool_stairs", CAT.BLOCKS],
-    ["minecraft:white_concrete_slab", CAT.BLOCKS],
-    ["minecraft:cinnabar", CAT.BLOCKS],
-    ["minecraft:chiseled_cinnabar", CAT.BLOCKS],
-    ["minecraft:polished_sulfur", CAT.BLOCKS],
-    ["minecraft:sulfur_bricks", CAT.BLOCKS],
-    ["minecraft:sulfur_spike", CAT.BLOCKS],
-    ["minecraft:copper_bars", CAT.BLOCKS],
-    ["minecraft:copper_golem_statue", CAT.BLOCKS],
-    ["minecraft:copper_torch", CAT.BLOCKS],
-    ["minecraft:copper_lantern", CAT.BLOCKS],
+    ["minecraft:oak_shelf", CAT.FUNCTIONAL],
+    ["minecraft:white_cushion", CAT.COLORED],
+    ["minecraft:cinnabar", CAT.BUILDING],
+    ["minecraft:chiseled_cinnabar", CAT.BUILDING],
+    ["minecraft:polished_sulfur", CAT.BUILDING],
+    ["minecraft:sulfur_bricks", CAT.BUILDING],
+    ["minecraft:sulfur_spike", CAT.BUILDING],
+    ["minecraft:copper_bars", CAT.BUILDING],
+    ["minecraft:copper_golem_statue", CAT.BUILDING],
+    ["minecraft:copper_torch", CAT.BUILDING],
+    ["minecraft:copper_lantern", CAT.BUILDING],
     ["minecraft:lightning_rod", CAT.REDSTONE],
     ["minecraft:exposed_lightning_rod", CAT.REDSTONE],
     ["minecraft:waxed_oxidized_lightning_rod", CAT.REDSTONE],
-    ["minecraft:copper_nautilus_armor", CAT.ARMOR],
-    ["minecraft:netherite_nautilus_armor", CAT.ARMOR],
-    ["minecraft:copper_horse_armor", CAT.ARMOR],
-    ["minecraft:netherite_horse_armor", CAT.ARMOR],
-    ["minecraft:wooden_spear", CAT.TOOLS],
-    ["minecraft:stone_spear", CAT.TOOLS],
-    ["minecraft:netherite_spear", CAT.TOOLS],
-    ["minecraft:golden_dandelion", CAT.PLANTS],
-    ["minecraft:red_shrub", CAT.PLANTS],
-    ["minecraft:shelf_mushroom", CAT.PLANTS],
-    ["minecraft:ice_crystal", CAT.BLOCKS],
-    ["minecraft:icicle", CAT.BLOCKS],
-    ["minecraft:straw_bed", CAT.BLOCKS],
-    ["minecraft:poplar_planks", CAT.BLOCKS],
-    ["minecraft:poplar_log", CAT.BLOCKS],
-    ["minecraft:poplar_sapling", CAT.PLANTS],
+    ["minecraft:copper_nautilus_armor", CAT.COMBAT],
+    ["minecraft:netherite_nautilus_armor", CAT.COMBAT],
+    ["minecraft:copper_horse_armor", CAT.COMBAT],
+    ["minecraft:netherite_horse_armor", CAT.COMBAT],
+    ["minecraft:wooden_spear", CAT.COMBAT],
+    ["minecraft:stone_spear", CAT.COMBAT],
+    ["minecraft:netherite_spear", CAT.COMBAT],
+    ["minecraft:golden_dandelion", CAT.NATURAL],
+    ["minecraft:red_shrub", CAT.NATURAL],
+    ["minecraft:shelf_mushroom", CAT.NATURAL],
+    ["minecraft:ice_crystal", CAT.BUILDING],
+    ["minecraft:icicle", CAT.BUILDING],
+    ["minecraft:straw_bed", CAT.FUNCTIONAL],
+    ["minecraft:poplar_planks", CAT.BUILDING],
+    ["minecraft:poplar_log", CAT.NATURAL],
+    ["minecraft:poplar_sapling", CAT.NATURAL],
     ["minecraft:poplar_boat", CAT.TOOLS],
     ["minecraft:poplar_button", CAT.REDSTONE],
     ["minecraft:sulfur_cube_bucket", CAT.TOOLS],
-    ["minecraft:sulfur_cube_spawn_egg", CAT.MISC],
-    ["minecraft:music_disc_bounce", CAT.MISC],
+    ["minecraft:sulfur_cube_spawn_egg", CAT.SPAWN_EGGS],
+    ["minecraft:music_disc_bounce", CAT.INGREDIENTS],
+    ["minecraft:netherite_upgrade_smithing_template", CAT.INGREDIENTS],
   ];
   for (const [id, category] of expected) {
     assert.equal(classify(id), category, `${id} should be ${categoryName(id)} (${category})`);
   }
 });
 
-test("new block families group by material and shape", () => {
-  assert.equal(familyOf("minecraft:oak_shelf"), "shelves");
-  assert.equal(materialOf("minecraft:oak_shelf"), "minecraft:oak");
-  assert.equal(shapeOf("minecraft:oak_shelf"), 3);
-
-  assert.equal(familyOf("minecraft:white_cushion"), "cushions");
-  assert.equal(familyOf("minecraft:white_wool"), "wool");
-  assert.equal(materialOf("minecraft:white_wool"), "minecraft:white_wool");
-  assert.equal(shapeOf("minecraft:white_wool"), 0);
-  assert.equal(shapeOf("minecraft:white_wool_stairs"), 1);
-  assert.equal(shapeOf("minecraft:white_wool_slab"), 2);
-
-  assert.equal(familyOf("minecraft:white_concrete"), "concrete");
-  assert.equal(materialOf("minecraft:white_concrete"), "minecraft:white_concrete");
-  assert.equal(shapeOf("minecraft:white_concrete"), 0);
-  assert.equal(shapeOf("minecraft:white_concrete_stairs"), 1);
-  assert.equal(shapeOf("minecraft:white_concrete_slab"), 2);
-
-  assert.equal(familyOf("minecraft:cinnabar"), "stones");
-  assert.equal(materialOf("minecraft:cinnabar"), "minecraft:cinnabar");
-  assert.equal(shapeOf("minecraft:cinnabar"), 0);
-  assert.equal(shapeOf("minecraft:cinnabar_stairs"), 1);
-  assert.equal(materialOf("minecraft:cinnabar_brick_stairs"), "minecraft:cinnabar");
-
-  assert.equal(familyOf("minecraft:lightning_rod"), "rods");
-  assert.equal(materialOf("minecraft:lightning_rod"), "minecraft:lightning");
-  assert.equal(familyOf("minecraft:copper_nautilus_armor"), "armor");
-  assert.equal(materialOf("minecraft:copper_nautilus_armor"), "minecraft:copper");
-  assert.equal(familyOf("minecraft:stone_spear"), "spears");
-  assert.equal(materialOf("minecraft:stone_spear"), "minecraft:stone");
-  assert.equal(familyOf("minecraft:potent_sulfur"), "stones");
-  assert.equal(materialOf("minecraft:potent_sulfur"), "minecraft:sulfur");
-  assert.equal(hasModifier("minecraft:potent_sulfur"), true);
+test("wood family stays together: planks -> stairs -> slab -> fence -> gate -> door -> trapdoor -> sign", () => {
+  const items = [
+    "minecraft:oak_sign",
+    "minecraft:spruce_planks",
+    "minecraft:oak_trapdoor",
+    "minecraft:oak_planks",
+    "minecraft:oak_stairs",
+    "minecraft:oak_fence_gate",
+    "minecraft:oak_fence",
+    "minecraft:oak_door",
+    "minecraft:oak_slab",
+  ].map((id) => stack(id));
+  assert.deepEqual(idsOf(sortItems(items)), [
+    "minecraft:oak_planks",
+    "minecraft:oak_stairs",
+    "minecraft:oak_slab",
+    "minecraft:oak_fence",
+    "minecraft:oak_fence_gate",
+    "minecraft:oak_door",
+    "minecraft:oak_trapdoor",
+    "minecraft:oak_sign",
+    "minecraft:spruce_planks",
+  ]);
 });
 
-test("wool and concrete variants sort base -> stairs -> slab", () => {
+test("stone family orders base -> stairs -> slab -> wall, with weathered variants next to their shape", () => {
   const items = [
-    stack("minecraft:white_wool_slab"),
-    stack("minecraft:white_wool_stairs"),
-    stack("minecraft:white_wool"),
-    stack("minecraft:white_concrete_slab"),
-    stack("minecraft:white_concrete_stairs"),
-    stack("minecraft:white_concrete"),
-  ];
+    "minecraft:mossy_cobblestone",
+    "minecraft:cobblestone_wall",
+    "minecraft:cobblestone_slab",
+    "minecraft:cobblestone",
+    "minecraft:cobblestone_stairs",
+  ].map((id) => stack(id));
+  assert.deepEqual(idsOf(sortItems(items)), [
+    "minecraft:cobblestone",
+    "minecraft:mossy_cobblestone",
+    "minecraft:cobblestone_stairs",
+    "minecraft:cobblestone_slab",
+    "minecraft:cobblestone_wall",
+  ]);
+});
+
+test("colored blocks follow the 16 dye colors and stay grouped by shape", () => {
+  const items = [
+    "minecraft:black_wool",
+    "minecraft:white_carpet",
+    "minecraft:white_wool",
+    "minecraft:black_carpet",
+    "minecraft:white_wool_slab",
+    "minecraft:white_wool_stairs",
+  ].map((id) => stack(id));
   const sorted = idsOf(sortItems(items));
   assert.deepEqual(sorted.slice(0, 3), [
-    "minecraft:white_concrete",
-    "minecraft:white_concrete_stairs",
-    "minecraft:white_concrete_slab",
-  ]);
-  assert.deepEqual(sorted.slice(3), [
     "minecraft:white_wool",
     "minecraft:white_wool_stairs",
     "minecraft:white_wool_slab",
   ]);
+  assert.deepEqual(sorted.slice(3), [
+    "minecraft:black_wool",
+    "minecraft:white_carpet",
+    "minecraft:black_carpet",
+  ]);
 });
 
-test("shelves and spears stay in one contiguous family block", () => {
-  const shelves = [
-    "minecraft:oak_shelf",
-    "minecraft:birch_shelf",
-    "minecraft:acacia_shelf",
-    "minecraft:oak_planks",
-    "minecraft:spruce_shelf",
+test("tools and armor order by material tier", () => {
+  const tools = [
+    "minecraft:netherite_pickaxe",
+    "minecraft:iron_pickaxe",
+    "minecraft:wooden_pickaxe",
+    "minecraft:stone_pickaxe",
+    "minecraft:copper_pickaxe",
   ].map((id) => stack(id));
-  const sortedShelves = idsOf(sortItems(shelves));
-  const shelfPositions = sortedShelves.map((id, index) => (id.endsWith("_shelf") ? index : -1)).filter((i) => i >= 0);
-  assert.deepEqual(shelfPositions, [1, 2, 3, 4]);
-
-  const spears = [
-    "minecraft:netherite_spear",
-    "minecraft:stone_spear",
-    "minecraft:wooden_spear",
-    "minecraft:diamond_sword",
-  ].map((id) => stack(id));
-  const sortedSpears = idsOf(sortItems(spears));
-  assert.deepEqual(sortedSpears.slice(0, 3), [
-    "minecraft:netherite_spear",
-    "minecraft:stone_spear",
-    "minecraft:wooden_spear",
+  assert.deepEqual(idsOf(sortItems(tools)), [
+    "minecraft:wooden_pickaxe",
+    "minecraft:stone_pickaxe",
+    "minecraft:copper_pickaxe",
+    "minecraft:iron_pickaxe",
+    "minecraft:netherite_pickaxe",
   ]);
-  assert.equal(sortedSpears[3], "minecraft:diamond_sword");
+
+  const armor = [
+    "minecraft:diamond_boots",
+    "minecraft:iron_helmet",
+    "minecraft:leather_chestplate",
+    "minecraft:diamond_helmet",
+    "minecraft:leather_helmet",
+  ].map((id) => stack(id));
+  assert.deepEqual(idsOf(sortItems(armor)), [
+    "minecraft:leather_helmet",
+    "minecraft:leather_chestplate",
+    "minecraft:iron_helmet",
+    "minecraft:diamond_helmet",
+    "minecraft:diamond_boots",
+  ]);
+});
+
+test("copper follows plain -> cut -> exposed -> weathered -> oxidized -> waxed", () => {
+  const items = [
+    "minecraft:waxed_copper",
+    "minecraft:oxidized_copper",
+    "minecraft:exposed_copper",
+    "minecraft:copper_block",
+    "minecraft:cut_copper",
+  ].map((id) => stack(id));
+  assert.deepEqual(idsOf(sortItems(items)), [
+    "minecraft:copper_block",
+    "minecraft:cut_copper",
+    "minecraft:exposed_copper",
+    "minecraft:oxidized_copper",
+    "minecraft:waxed_copper",
+  ]);
+});
+
+test("stacks that differ only by data stay adjacent and ordered", () => {
+  const items = [
+    stack("minecraft:potion", 1, { data: 2 }),
+    stack("minecraft:potion", 1, { data: 0 }),
+    stack("minecraft:potion", 1, { data: 1 }),
+  ];
+  assert.deepEqual(sortItems(items).map((s) => s.data), [0, 1, 2]);
+});
+
+test("every 1.26.60 registry item is classified (only admin blocks stay in 其他)", () => {
+  const fixture = readFileSync(
+    new URL("./fixtures/vanilla-items-1.26.60.txt", import.meta.url),
+    "utf8",
+  );
+  const ids = fixture.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  assert.equal(ids.length, 1627, "fixture should contain the whole 1.26.60 registry");
+
+  const adminAllowed = new Set(["minecraft:bedrock", "minecraft:barrier", "minecraft:allow", "minecraft:deny"]);
+  for (const id of ids) {
+    const section = sectionOf(id);
+    assert.ok(section && section.length > 0, `${id} has no section`);
+    if (section === "misc_other") {
+      assert.ok(
+        adminAllowed.has(id) ||
+          id === "minecraft:structure_block" ||
+          id === "minecraft:structure_void" ||
+          id === "minecraft:jigsaw" ||
+          id === "minecraft:border_block" ||
+          id.endsWith("command_block") ||
+          id.startsWith("minecraft:light_block_"),
+        `${id} fell through to 其他 but is not an admin-only block`,
+      );
+    }
+  }
+});
+
+test("sorting the whole registry keeps every section contiguous and is deterministic", () => {
+  const fixture = readFileSync(
+    new URL("./fixtures/vanilla-items-1.26.60.txt", import.meta.url),
+    "utf8",
+  );
+  const items = fixture
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((id) => stack(id));
+
+  const first = idsOf(sortItems(items));
+  const second = idsOf(sortItems(items));
+  assert.deepEqual(first, second, "sorting must be deterministic");
+
+  const seen = new Set();
+  let current = null;
+  for (const id of first) {
+    const section = sectionOf(id);
+    if (section !== current) {
+      assert.ok(!seen.has(section), `section ${section} appears in more than one block`);
+      seen.add(section);
+      current = section;
+    }
+  }
 });

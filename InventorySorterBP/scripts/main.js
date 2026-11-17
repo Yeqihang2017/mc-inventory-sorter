@@ -145,25 +145,25 @@ function runGameSelfTest(player) {
 
     // 6) 1.26.x 新物品分类（不依赖具体图标/材质数据，只验证分类表）
     const newCategories = [
-      ["minecraft:oak_shelf", CAT.BLOCKS],
-      ["minecraft:white_cushion", CAT.BLOCKS],
-      ["minecraft:cinnabar", CAT.BLOCKS],
-      ["minecraft:sulfur", CAT.BLOCKS],
-      ["minecraft:ice_crystal", CAT.BLOCKS],
-      ["minecraft:icicle", CAT.BLOCKS],
-      ["minecraft:copper_nautilus_armor", CAT.ARMOR],
-      ["minecraft:netherite_horse_armor", CAT.ARMOR],
-      ["minecraft:diamond_spear", CAT.TOOLS],
+      ["minecraft:oak_shelf", CAT.FUNCTIONAL],
+      ["minecraft:white_cushion", CAT.COLORED],
+      ["minecraft:cinnabar", CAT.BUILDING],
+      ["minecraft:sulfur", CAT.BUILDING],
+      ["minecraft:ice_crystal", CAT.BUILDING],
+      ["minecraft:icicle", CAT.BUILDING],
+      ["minecraft:copper_nautilus_armor", CAT.COMBAT],
+      ["minecraft:netherite_horse_armor", CAT.COMBAT],
+      ["minecraft:diamond_spear", CAT.COMBAT],
       ["minecraft:lightning_rod", CAT.REDSTONE],
-      ["minecraft:golden_dandelion", CAT.PLANTS],
-      ["minecraft:straw_bed", CAT.BLOCKS],
+      ["minecraft:golden_dandelion", CAT.NATURAL],
+      ["minecraft:straw_bed", CAT.FUNCTIONAL],
     ];
     for (const [id, expected] of newCategories) {
       test(classify(id) === expected, `${id} should be category ${expected}, got ${classify(id)}`);
     }
 
     if (failures.length === 0) {
-      player.sendMessage("§a✔ Self-test passed (stack merging, sort and count conservation, 1.26 item categories; 18 checks)");
+      player.sendMessage("§a✔ Self-test passed (stack merging, creative sort order, 1.26 item categories)");
     } else {
       player.sendMessage("§cSelf-test failed: " + failures.join("; "));
     }
@@ -330,27 +330,28 @@ function runStartupSelfTest() {
     const hb0 = fakeItems[0], hb3 = fakeItems[3];
     check(hb0 && hb0.typeId === "minecraft:diamond_sword" && hb0.amount === 1, "hotbar slot 0 was modified");
     check(hb3 && hb3.typeId === "minecraft:cobblestone" && hb3.amount === 40, "hotbar slot 3 was modified");
-    // 类别顺序：食物(2) 在 方块(3) 之前 → 苹果在前，圆石在后
+    // 类别顺序与创造模式物品栏一致：建筑方块在食物之前 → 圆石在前，苹果在后。
+    // 快捷栏第 3 格的圆石不参与整理，因此只有 40+40=80 个圆石进入合并（64+16）。
     const s9 = fakeItems[9], s10 = fakeItems[10], s11 = fakeItems[11];
-    check(s9 && s9.typeId === "minecraft:apple" && s9.amount === 5, "slot 9 should be apple x5, got " + (s9 && s9.typeId));
-    check(s10 && s10.typeId === "minecraft:cobblestone" && s10.amount === 64, "slot 10 should be cobblestone x64, got " + (s10 && s10.typeId));
-    check(s11 && s11.typeId === "minecraft:cobblestone" && s11.amount === 16, "slot 11 should be cobblestone x16");
+    check(s9 && s9.typeId === "minecraft:cobblestone" && s9.amount === 64, "slot 9 should be cobblestone x64, got " + (s9 && s9.typeId));
+    check(s10 && s10.typeId === "minecraft:cobblestone" && s10.amount === 16, "slot 10 should be cobblestone x16, got " + (s10 && s10.typeId));
+    check(s11 && s11.typeId === "minecraft:apple" && s11.amount === 5, "slot 11 should be apple x5, got " + (s11 && s11.typeId));
     check(fakeItems[12] === undefined, "slot 12 should be empty");
 
     // 7) 1.26.x 新物品分类表
     const newCategories = [
-      ["minecraft:oak_shelf", CAT.BLOCKS],
-      ["minecraft:white_cushion", CAT.BLOCKS],
-      ["minecraft:cinnabar", CAT.BLOCKS],
-      ["minecraft:sulfur", CAT.BLOCKS],
-      ["minecraft:ice_crystal", CAT.BLOCKS],
-      ["minecraft:icicle", CAT.BLOCKS],
-      ["minecraft:copper_nautilus_armor", CAT.ARMOR],
-      ["minecraft:netherite_horse_armor", CAT.ARMOR],
-      ["minecraft:diamond_spear", CAT.TOOLS],
+      ["minecraft:oak_shelf", CAT.FUNCTIONAL],
+      ["minecraft:white_cushion", CAT.COLORED],
+      ["minecraft:cinnabar", CAT.BUILDING],
+      ["minecraft:sulfur", CAT.BUILDING],
+      ["minecraft:ice_crystal", CAT.BUILDING],
+      ["minecraft:icicle", CAT.BUILDING],
+      ["minecraft:copper_nautilus_armor", CAT.COMBAT],
+      ["minecraft:netherite_horse_armor", CAT.COMBAT],
+      ["minecraft:diamond_spear", CAT.COMBAT],
       ["minecraft:lightning_rod", CAT.REDSTONE],
-      ["minecraft:golden_dandelion", CAT.PLANTS],
-      ["minecraft:straw_bed", CAT.BLOCKS],
+      ["minecraft:golden_dandelion", CAT.NATURAL],
+      ["minecraft:straw_bed", CAT.FUNCTIONAL],
     ];
     for (const [id, expected] of newCategories) {
       check(classify(id) === expected, `${id} should be category ${expected}, got ${classify(id)}`);
